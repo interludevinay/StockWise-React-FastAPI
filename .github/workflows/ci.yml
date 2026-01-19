@@ -1,0 +1,139 @@
+name: CI - Test, Scan & Push Docker Images
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+env:
+  BACKEND_IMAGE: ${{ secrets.DOCKERHUB_USERNAME }}/stockwise-backend
+  FRONTEND_IMAGE: ${{ secrets.DOCKERHUB_USERNAME }}/stockwise-frontend
+
+jobs:
+  backend:
+    name: Backend - Test, Scan & Push
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:15
+        ports:
+          - 5432:5432
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: admin
+          POSTGRES_DB: inventoryDB
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # ---------- Set DB environment variables ----------
+      - name: Set database environment variables
+        run: |
+          echo "DB_USER=postgres" >> $GITHUB_ENV
+          echo "DB_PASSWORD=admin" >> $GITHUB_ENV
+          echo "DB_HOST=localhost" >> $GITHUB_ENV
+          echo "DB_PORT=5432" >> $GITHUB_ENV
+          echo "DB_NAME=inventoryDB" >> $GITHUB_ENV
+
+      # ---------- Setup Python ----------
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      # ---------- Install dependencies ----------
+      - name: Install backend dependencies
+        working-directory: stockwise-backend
+        run: |
+          pip install -r requirements.txt
+          pip install pytest psycopg2-binary
+
+      # ---------- Wait for Postgres ----------
+      - name: Wait for Postgres
+        run: |
+          for i in {1..30}; do
+            pg_isready -h localhost -p 5432 -U postgres && break
+            echo "Waiting for Postgres..."
+            sleep 2
+          done
+
+      # ---------- Run backend tests ----------
+      - name: Run backend tests
+        working-directory: stockwise-backend
+        run: pytest
+
+      # ---------- Build Docker image ----------
+      - name: Build backend image
+        run: docker build -t $BACKEND_IMAGE:latest ./stockwise-backend
+
+      # ---------- Trivy Scan ----------
+      - name: Scan backend image with Trivy
+        uses: aquasecurity/trivy-action@0.20.0
+        with:
+          image-ref: ${{ env.BACKEND_IMAGE }}:latest
+          severity: CRITICAL
+          exit-code: 1
+
+      # ---------- Push Docker image ----------
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Push backend image
+        run: docker push $BACKEND_IMAGE:latest
+
+  frontend:
+    name: Frontend - Test, Scan & Push
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # ---------- Setup Node.js ----------
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "18"
+
+      # ---------- Install frontend dependencies ----------
+      - name: Install frontend dependencies
+        working-directory: stockwise-frontend
+        run: npm install
+
+      # ---------- Run frontend tests ----------
+      # Fix: specify test path or use passWithNoTests if needed
+      - name: Run frontend tests
+        working-directory: stockwise-frontend
+        run: npm test -- --watch=false --passWithNoTests
+
+      # ---------- Build Docker image ----------
+      - name: Build frontend image
+        run: docker build -t $FRONTEND_IMAGE:latest ./stockwise-frontend
+
+      # ---------- Trivy Scan ----------
+      - name: Scan frontend image with Trivy
+        uses: aquasecurity/trivy-action@0.20.0
+        with:
+          image-ref: ${{ env.FRONTEND_IMAGE }}:latest
+          severity: CRITICAL
+          exit-code: 1
+
+      # ---------- Push Docker image ----------
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Push frontend image
+        run: docker push $FRONTEND_IMAGE:latest
