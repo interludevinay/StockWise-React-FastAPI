@@ -1,0 +1,104 @@
+name: CI - Test, Scan & Push Docker Images
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+env:
+  BACKEND_IMAGE: ${{ secrets.DOCKERHUB_USERNAME }}/stockwise-backend
+  FRONTEND_IMAGE: ${{ secrets.DOCKERHUB_USERNAME }}/stockwise-frontend
+
+jobs:
+  backend:
+    name: Backend - Test, Scan & Push
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # ---------- Backend Tests ----------
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install backend dependencies
+        working-directory: stockwise-backend
+        run: |
+          pip install -r requirements.txt
+          pip install pytest
+
+      - name: Run backend tests
+        working-directory: stockwise-backend
+        run: pytest
+
+      # ---------- Build Image ----------
+      - name: Build backend image
+        run: |
+          docker build -t $BACKEND_IMAGE:latest ./stockwise-backend
+
+      # ---------- Trivy Scan ----------
+      - name: Scan backend image with Trivy
+        uses: aquasecurity/trivy-action@0.20.0
+        with:
+          image-ref: ${{ env.BACKEND_IMAGE }}:latest
+          severity: HIGH,CRITICAL
+          exit-code: 1
+
+      # ---------- Push Image ----------
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Push backend image
+        run: docker push $BACKEND_IMAGE:latest
+
+  frontend:
+    name: Frontend - Test, Scan & Push
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # ---------- Frontend Tests ----------
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "18"
+
+      - name: Install frontend dependencies
+        working-directory: stockwise-frontend
+        run: npm install
+
+      - name: Run frontend tests
+        working-directory: stockwise-frontend
+        run: npm test -- --watch=false
+
+      # ---------- Build Image ----------
+      - name: Build frontend image
+        run: |
+          docker build -t $FRONTEND_IMAGE:latest ./stockwise-frontend
+
+      # ---------- Trivy Scan ----------
+      - name: Scan frontend image with Trivy
+        uses: aquasecurity/trivy-action@0.20.0
+        with:
+          image-ref: ${{ env.FRONTEND_IMAGE }}:latest
+          severity: HIGH,CRITICAL
+          exit-code: 1
+
+      # ---------- Push Image ----------
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Push frontend image
+        run: docker push $FRONTEND_IMAGE:latest
